@@ -5,7 +5,10 @@ use crate::structs::TypePerm;
 use crate::structs::{BlockGroupDescriptor, DirectoryEntry, Inode, Superblock};
 use null_terminated::NulStr;
 use rustyline::{DefaultEditor, Result};
+use std::collections::VecDeque;
+use std::f32::consts::E;
 use std::fmt;
+use std::io::ErrorKind;
 use std::mem;
 use uuid::Uuid;
 use zerocopy::ByteSlice;
@@ -115,12 +118,6 @@ impl Ext2 {
         let mut ret = Vec::new();
         let root = self.get_inode(inode);
         // println!("in read_dir_inode, #{} : {:?}", inode, root);
-        // if root.type_perm & TypePerm::DIRECTORY != TypePerm::DIRECTORY {
-        //     return Err(std::io::Error::new(
-        //         std::io::ErrorKind::Other,
-        //         "inode is not a directory",
-        //     ));
-        // }
         // println!("following direct pointer to data block: {}", root.direct_pointer[0]);
         let entry_ptr = self.blocks[root.direct_pointer[0] as usize - self.block_offset].as_ptr();
         let mut byte_offset: isize = 0;
@@ -132,6 +129,44 @@ impl Ext2 {
             ret.push((directory.inode as usize, &directory.name));
         }
         Ok(ret)
+    }
+
+    pub fn follow_path(&self, path: &str, dirs: Vec<(usize, &NulStr)>) -> std::io::Result<usize> {
+        let mut dirs = dirs;
+        // TODO: add regex on path
+        let mut candidate_dirs: VecDeque<&str> = path.split('/').collect();
+        println!("{:?}", candidate_dirs);
+
+        while candidate_dirs.len() > 0 {
+            let candidate_dir = candidate_dirs.pop_front().unwrap();
+            for dir in &dirs {
+                if dir.1.to_string().eq(candidate_dir) {
+                    let candidate_inode = self.get_inode(dir.0);
+                    if candidate_inode.type_perm & TypePerm::DIRECTORY != TypePerm::DIRECTORY {
+                        return Err(std::io::Error::new(
+                            ErrorKind::Other,
+                            "cannot cd into a file",
+                        ));
+                    }
+                    if candidate_dirs.len() > 0 {
+                        dirs = match self.read_dir_inode(dir.0) {
+                            Ok(dir_listing) => dir_listing,
+                            Err(_) => {
+                                println!("unable to read cwd");
+                                // TODO: figure out if this should break
+                                break;
+                            }
+                        };
+                        break;
+                    } else {
+                        println!("output - {}", dir.1);
+                        return Ok(dir.0);
+                    }
+                }
+            }
+        }
+
+        return Err(std::io::Error::new(ErrorKind::Other, "oh no!"));
     }
 }
 
@@ -180,32 +215,25 @@ fn main() -> Result<()> {
                     }
                     println!();
                 } else {
-                    // TODO: if the argument is a path, follow the path
-                    // e.g., cd dir_1/dir_2 should move you down 2 directories
-                    // deeper into dir_2
-                    let to_dir = elts[1];
-                    let mut found = false;
-                    for dir in &dirs {
-                        if dir.1.to_string().eq(to_dir) {
-                            // TODO: maybe don't just assume this is a directory
-                            found = true;
-                            let arg_inode = dir.0;
-                            let dirs = match ext2.read_dir_inode(arg_inode) {
-                                Ok(dir_listing) => dir_listing,
-                                Err(_) => {
-                                    println!("unable to read cwd");
-                                    break;
-                                }
-                            };
-                            for dir in &dirs {
-                                print!("{}\t", dir.1);
-                            }
-                            println!();
+                    let desired_dir = match ext2.follow_path(elts[1], dirs) {
+                        Ok(dir_listing) => dir_listing,
+                        Err(_) => {
+                            println!("unable to read dir_listing");
+                            break;
                         }
+                    };
+                    // TODO: maybe don't just assume this is a directory
+                    let dirs = match ext2.read_dir_inode(desired_dir) {
+                        Ok(dir_listing) => dir_listing,
+                        Err(_) => {
+                            println!("unable to read cwd");
+                            break;
+                        }
+                    };
+                    for dir in &dirs {
+                        print!("{}\t", dir.1);
                     }
-                    if !found {
-                        println!("unable to locate {}, cwd unchanged", to_dir);
-                    }
+                    println!();
                 }
             } else if line.starts_with("cd") {
                 // `cd` with no arguments, cd goes back to root
@@ -224,7 +252,9 @@ fn main() -> Result<()> {
                             // TODO: maybe don't just assume this is a directory
                             found = true;
                             let candidate_inode = ext2.get_inode(dir.0);
-                            if candidate_inode.type_perm & TypePerm::DIRECTORY != TypePerm::DIRECTORY {
+                            if candidate_inode.type_perm & TypePerm::DIRECTORY
+                                != TypePerm::DIRECTORY
+                            {
                                 println!("cannot cd into a file");
                             } else {
                                 current_working_inode = dir.0;
