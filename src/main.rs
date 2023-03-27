@@ -271,10 +271,67 @@ fn main() -> Result<()> {
                 // consider supporting `-p path/to_file` to create a path of directories
                 println!("mkdir not yet implemented");
             } else if line.starts_with("cat") {
+                // TODO: Need to finish
                 // `cat filename`
                 // print the contents of filename to stdout
                 // if it's a directory, print a nice error
-                println!("cat not yet implemented");
+                let elts: Vec<&str> = line.split(' ').collect();
+                if elts.len() == 1 {
+                    println!("no argument provided");
+                } else {
+                    // TODO: if the argument is a path, follow the path
+                    // e.g., cd dir_1/dir_2 should move you down 2 directories
+                    // deeper into dir_2
+                    let filename = elts[1];
+                    let mut found = false;
+                    for dir in &dirs {
+                        if dir.1.to_string().eq(filename) {
+                            // TODO: maybe don't just assume this is a directory
+                            found = true;
+                            let arg_inode = dir.0;
+                            let file = ext2.get_inode(arg_inode);
+
+                            // EXAMPLE OF HOW TO READ BLOCK
+                            // let block0 = ext2.blocks[file.direct_pointer[0] as usize - ext2.block_offset];
+                            // println!("{}", std::str::from_utf8(block0).unwrap());
+
+                            let mut filesize = 0;
+                            // Scan for file size
+                            for i in 0..=12 {
+                                filesize = if file.direct_pointer[i] != 0 {
+                                    filesize + 1
+                                } else {
+                                    filesize
+                                };
+                            }
+
+                            for i in 0..=12 {
+                                filesize = if file.direct_pointer[i] != 0 {
+                                    filesize + 1
+                                } else {
+                                    filesize
+                                };
+                            }
+
+                            println!("FILESIZE = {}", filesize);
+
+                            // let dirs = match file {
+                            //     Ok(dir_listing) => dir_listing,
+                            //     Err(_) => {
+                            //         println!("unable to read cwd");
+                            //         break;
+                            //     }
+                            // };
+                            // for dir in &dirs {
+                            //     print!("{}\t", dir.1);
+                            // }
+                            println!();
+                        }
+                    }
+                    if !found {
+                        println!("unable to locate {}", filename);
+                    }
+                }
             } else if line.starts_with("rm") {
                 // `rm target`
                 // unlink a file or empty directory
