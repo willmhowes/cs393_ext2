@@ -80,6 +80,8 @@ impl Ext2 {
         .chunks(block_size)
         .collect::<Vec<_>>();
 
+        // offset_bytes = the distance in bytes between the start of ext2 fs
+        // in memory and where we have marked our block arrray to have began in memory
         let offset_bytes = (blocks[0].as_ptr() as usize) - start_addr;
         let block_offset = offset_bytes / block_size;
         let uuid = Uuid::from_bytes(superblock.fs_id);
@@ -98,7 +100,7 @@ impl Ext2 {
         let group: usize = (inode - 1) / self.superblock.inodes_per_group as usize;
         let index: usize = (inode - 1) % self.superblock.inodes_per_group as usize;
 
-        // println!("in get_inode, inode num = {}, index = {}, group = {}", inode, index, group);
+        // println!("in get_inode, inode num = {}, index = {}, group = {}, block_offset = {}", inode, index, group, self.block_offset);
         let inode_table_block =
             (self.block_groups[group].inode_table_block) as usize - self.block_offset;
         // println!("in get_inode, block number of inode table {}", inode_table_block);
@@ -121,6 +123,7 @@ impl Ext2 {
         // println!("following direct pointer to data block: {}", root.direct_pointer[0]);
         let entry_ptr = self.blocks[root.direct_pointer[0] as usize - self.block_offset].as_ptr();
         let mut byte_offset: isize = 0;
+        // println!("root.size_low = {}", root.size_low);
         while byte_offset < root.size_low as isize {
             // <- todo, support large directories
             let directory = unsafe { &*(entry_ptr.offset(byte_offset) as *const DirectoryEntry) };
@@ -129,6 +132,27 @@ impl Ext2 {
             ret.push((directory.inode as usize, &directory.name));
         }
         Ok(ret)
+    }
+
+    pub fn create_dir_entry(&self, inode: usize) {
+        // let mut ret = Vec::new();
+        let block_size: usize = 1024 << self.superblock.log_block_size;
+        let root = self.get_inode(inode);
+        // println!("in read_dir_inode, #{} : {:?}", inode, root);
+        // println!("following direct pointer to data block: {}", root.direct_pointer[0]);
+        let entry_ptr = self.blocks[root.direct_pointer[0] as usize - self.block_offset].as_ptr();
+        let mut byte_offset = root.size_low as isize;
+        while byte_offset < root.size_low as isize {
+            // <- todo, support large directories
+            let directory = unsafe { &*(entry_ptr.offset(byte_offset) as *const DirectoryEntry) };
+            // println!("{:?}", directory);
+            byte_offset += directory.entry_size as isize;
+            // if byte_offset >= block_size as isize {
+            //     byte_offset = 0;
+
+            // }
+        }
+        // Ok(ret)
     }
 
     pub fn follow_path(&self, path: &str, dirs: Vec<(usize, &NulStr)>) -> std::io::Result<usize> {
@@ -290,42 +314,54 @@ fn main() -> Result<()> {
                             found = true;
                             let arg_inode = dir.0;
                             let file = ext2.get_inode(arg_inode);
+                            let file_size = file.size_low;
 
-                            // EXAMPLE OF HOW TO READ BLOCK
-                            // let block0 = ext2.blocks[file.direct_pointer[0] as usize - ext2.block_offset];
-                            // println!("{}", std::str::from_utf8(block0).unwrap());
-
-                            let mut filesize = 0;
-                            // Scan for file size
-                            for i in 0..=12 {
-                                filesize = if file.direct_pointer[i] != 0 {
-                                    filesize + 1
+                            let mut running_file_size: u32 = 0;
+                            // Scan through direct block pointers
+                            let mut i: usize = 0;
+                            while i < 12 && running_file_size < file_size {
+                                if file.direct_pointer[i] != 0 {
+                                    // Locate data block
+                                    let block = ext2.blocks
+                                        [file.direct_pointer[i] as usize - ext2.block_offset];
+                                    // Print data block as utf8
+                                    print!("{}", std::str::from_utf8(block).unwrap());
                                 } else {
-                                    filesize
+                                    print!("...");
                                 };
+                                running_file_size += ext2.block_size as u32;
+                                i += 1;
                             }
 
-                            for i in 0..=12 {
-                                filesize = if file.direct_pointer[i] != 0 {
-                                    filesize + 1
-                                } else {
-                                    filesize
-                                };
+                            // Scan through indrect block pointers
+                            let mut i: usize = 0;
+                            if file.indirect_pointer != 0 {
+                                // Locate indirect block
+                                let mut indirect_block =
+                                    ext2.blocks[file.indirect_pointer as usize - ext2.block_offset];
+                                let num_ptrs_in_indirect = ext2.block_size / 4;
+                                while i < num_ptrs_in_indirect && running_file_size < file_size {
+                                    // grab four bytes that represent the pointer and check to see
+                                    // if it is zero or not
+                                    let (int_bytes, rest) =
+                                        indirect_block.split_at(std::mem::size_of::<u32>());
+                                    indirect_block = rest;
+                                    let file_pointer: u32 =
+                                        u32::from_le_bytes(int_bytes.try_into().unwrap());
+                                    if file_pointer != 0 {
+                                        let block =
+                                            ext2.blocks[file_pointer as usize - ext2.block_offset];
+                                        print!("{}", std::str::from_utf8(block).unwrap());
+                                    } else {
+                                        print!("...");
+                                    };
+                                    running_file_size += ext2.block_size as u32;
+                                    i += 1;
+                                }
                             }
 
-                            println!("FILESIZE = {}", filesize);
-
-                            // let dirs = match file {
-                            //     Ok(dir_listing) => dir_listing,
-                            //     Err(_) => {
-                            //         println!("unable to read cwd");
-                            //         break;
-                            //     }
-                            // };
-                            // for dir in &dirs {
-                            //     print!("{}\t", dir.1);
-                            // }
-                            println!();
+                            // println!("running_file_size = {running_file_size}");
+                            // println!("FILESIZE = {}", file_size);
                         }
                     }
                     if !found {
