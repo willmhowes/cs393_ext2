@@ -4,7 +4,7 @@ In this project I implemented `cat` and explored what it would take to implement
 
 ## `cat`
 
-My implementation of cat correctly traverses the direct, indirect, doubly indirect, and triply indirect pointers of a inode in order to print its contents to the terminal.
+My implementation of cat correctly traverses the direct, indirect, doubly indirect, and triply indirect pointers of a inode in order to print its contents to the terminal (see the final paragraph at the end of the `cat` section about triply indirect pointers).
 
 It's one thing to implement `cat`, but it's another thing to know whether or not the implementation is working as intended. The provided example filesystem with our project does not contain files sufficient to test the capability of the `cat` command. Thus, it is necessary to extend the provided filesystem. This is done easiest on linux because the linux kernal has native support for ext2. Unfortunately, I use Mac OS which does not support the ext2 filesystem. The closest possible work around are proprietary applications that allow an ext2 filesystem to be mounted as read-only, but still do not allow the filesystem to be modified.
 
