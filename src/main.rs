@@ -1,5 +1,5 @@
+use ext2::ext2::structs::TypePerm;
 use ext2::ext2::Ext2;
-use ext2::ext2::structs::{TypePerm};
 use rustyline::{DefaultEditor, Result};
 use std::f32::consts::E;
 
@@ -102,8 +102,9 @@ fn main() -> Result<()> {
                     // deeper into dir_2
                     let filename = elts[1];
                     let mut found = false;
+                    println!("DIRS: {:?}", dirs);
                     for dir in &dirs {
-                        if dir.1.to_string().eq(filename) {
+                        if dir.1.to_string().trim_end().eq(filename) {
                             // TODO: maybe don't just assume this is a directory
                             found = true;
                             let arg_inode = dir.0;
@@ -127,12 +128,13 @@ fn main() -> Result<()> {
                                 i += 1;
                             }
 
-                            // Scan through indrect block pointers
+                            // Scan through indirect block pointers
                             let mut i: usize = 0;
                             if file.indirect_pointer != 0 {
                                 // Locate indirect block
                                 let mut indirect_block =
                                     ext2.blocks[file.indirect_pointer as usize - ext2.block_offset];
+                                // We divide by 4 because each entry is 32 bits, or 4 bytes
                                 let num_ptrs_in_indirect = ext2.block_size / 4;
                                 while i < num_ptrs_in_indirect && running_file_size < file_size {
                                     // grab four bytes that represent the pointer and check to see
@@ -151,11 +153,148 @@ fn main() -> Result<()> {
                                     };
                                     running_file_size += ext2.block_size as u32;
                                     i += 1;
+                                } // Locate indirect block
+                            }
+
+                            // Scan through doubly-indirect block pointers
+                            let mut i: usize = 0;
+                            if file.doubly_indirect != 0 {
+                                // Locate doubly indirect block
+                                let mut doubly_indirect =
+                                    ext2.blocks[file.doubly_indirect as usize - ext2.block_offset];
+                                let num_ptrs_in_doubly_indirect = ext2.block_size / 4;
+                                while i < num_ptrs_in_doubly_indirect
+                                    && running_file_size < file_size
+                                {
+                                    // grab four bytes that represent the pointer and check to see
+                                    // if it is zero or not
+                                    let (int_bytes, rest) =
+                                        doubly_indirect.split_at(std::mem::size_of::<u32>());
+                                    doubly_indirect = rest;
+
+                                    let indirect_block_pointer: u32 =
+                                        u32::from_le_bytes(int_bytes.try_into().unwrap());
+
+                                    // navigate singly indirect blocks
+                                    let mut j: usize = 0;
+                                    if indirect_block_pointer != 0 {
+                                        let mut indirect_block = ext2.blocks
+                                            [indirect_block_pointer as usize - ext2.block_offset];
+                                        // We divide by 4 because each entry is 32 bits, or 4 bytes
+                                        let num_ptrs_in_indirect = ext2.block_size / 4;
+                                        while j < num_ptrs_in_indirect
+                                            && running_file_size < file_size
+                                        {
+                                            // grab four bytes that represent the pointer and check to see
+                                            // if it is zero or not
+                                            let (int_bytes, rest) =
+                                                indirect_block.split_at(std::mem::size_of::<u32>());
+                                            indirect_block = rest;
+                                            let file_pointer: u32 =
+                                                u32::from_le_bytes(int_bytes.try_into().unwrap());
+                                            if file_pointer != 0 {
+                                                let block = ext2.blocks
+                                                    [file_pointer as usize - ext2.block_offset];
+                                                print!("{}", std::str::from_utf8(block).unwrap());
+                                            } else {
+                                                print!("...");
+                                            };
+                                            running_file_size += ext2.block_size as u32;
+                                            j += 1;
+                                        }
+                                    } else {
+                                        print!("...");
+                                    };
+                                    i += 1;
                                 }
                             }
 
-                            // println!("running_file_size = {running_file_size}");
-                            // println!("FILESIZE = {}", file_size);
+                            // Scan through triply indirect block pointers
+                            let mut z: usize = 0;
+                            if file.triply_indirect != 0 {
+                                // Locate triply indirect block
+                                let mut triply_indirect =
+                                    ext2.blocks[file.triply_indirect as usize - ext2.block_offset];
+                                // We divide by 4 because each entry is 32 bits, or 4 bytes
+                                let num_ptrs_in_triply_indirect = ext2.block_size / 4;
+                                while z < num_ptrs_in_triply_indirect
+                                    && running_file_size < file_size
+                                {
+                                    // grab four bytes that represent the pointer and check to see
+                                    // if it is zero or not
+                                    let (int_bytes, rest) =
+                                        triply_indirect.split_at(std::mem::size_of::<u32>());
+                                    triply_indirect = rest;
+                                    let doubly_indirect_file_pointer: u32 =
+                                        u32::from_le_bytes(int_bytes.try_into().unwrap());
+
+                                    // Scan through doubly-indirect block pointers
+                                    let mut i: usize = 0;
+                                    if doubly_indirect_file_pointer != 0 {
+                                        // Locate doubly indirect block
+                                        let mut doubly_indirect = ext2.blocks
+                                            [doubly_indirect_file_pointer as usize
+                                                - ext2.block_offset];
+                                        let num_ptrs_in_doubly_indirect = ext2.block_size / 4;
+                                        while i < num_ptrs_in_doubly_indirect
+                                            && running_file_size < file_size
+                                        {
+                                            // grab four bytes that represent the pointer and check to see
+                                            // if it is zero or not
+                                            let (int_bytes, rest) = doubly_indirect
+                                                .split_at(std::mem::size_of::<u32>());
+                                            doubly_indirect = rest;
+
+                                            let indirect_block_pointer: u32 =
+                                                u32::from_le_bytes(int_bytes.try_into().unwrap());
+
+                                            // navigate singly indirect blocks
+                                            let mut j: usize = 0;
+                                            if indirect_block_pointer != 0 {
+                                                let mut indirect_block = ext2.blocks
+                                                    [indirect_block_pointer as usize
+                                                        - ext2.block_offset];
+                                                // We divide by 4 because each entry is 32 bits, or 4 bytes
+                                                let num_ptrs_in_indirect = ext2.block_size / 4;
+                                                while j < num_ptrs_in_indirect
+                                                    && running_file_size < file_size
+                                                {
+                                                    // grab four bytes that represent the pointer and check to see
+                                                    // if it is zero or not
+                                                    let (int_bytes, rest) = indirect_block
+                                                        .split_at(std::mem::size_of::<u32>());
+                                                    indirect_block = rest;
+                                                    let file_pointer: u32 = u32::from_le_bytes(
+                                                        int_bytes.try_into().unwrap(),
+                                                    );
+                                                    if file_pointer != 0 {
+                                                        let block = ext2.blocks[file_pointer
+                                                            as usize
+                                                            - ext2.block_offset];
+                                                        print!(
+                                                            "{}",
+                                                            std::str::from_utf8(block).unwrap()
+                                                        );
+                                                    } else {
+                                                        print!("...");
+                                                    };
+                                                    running_file_size += ext2.block_size as u32;
+                                                    j += 1;
+                                                }
+                                            } else {
+                                                print!("...");
+                                            };
+                                            i += 1;
+                                        }
+                                    } else {
+                                        print!("...");
+                                    };
+                                    z += 1;
+                                }
+                            }
+
+                            println!("\nrunning_file_size = {running_file_size}");
+                            println!("FILESIZE = {}", file_size);
                         }
                     }
                     if !found {
